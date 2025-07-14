@@ -1,0 +1,8 @@
+{
+  "name": "MemoryCare",
+  "description": "A personal assistant application designed for individuals who may need help with daily tasks, memory recall, activity planning, and location services. It aims to provide support and enhance independence.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "prompt": ""
+}
