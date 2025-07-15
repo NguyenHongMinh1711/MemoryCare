@@ -1,7 +1,8 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
-import useLocalStorage from '../hooks/useLocalStorage';
-import { Activity } from '../types';
+import { useAuth } from '../contexts/AuthContext';
+import { activitiesAPI } from '../lib/api/activities';
+import type { Database } from '../lib/database.types';
 import Button from '../components/common/Button';
 import Modal from '../components/common/Modal';
 import { PlusIcon, TrashIcon, CalendarIcon, SpeakerWaveIcon } from '../constants';
@@ -9,7 +10,9 @@ import useTextToSpeech from '../hooks/useTextToSpeech';
 import PageHeader from '../components/common/PageHeader';
 import NotificationBanner from '../components/common/NotificationBanner';
 
-const AddActivityForm: React.FC<{ onAddActivity: (activity: Omit<Activity, 'id'>) => void; onClose: () => void }> = ({ onAddActivity, onClose }) => {
+type Activity = Database['public']['Tables']['activities']['Row']
+
+const AddActivityForm: React.FC<{ onAddActivity: (activity: Omit<Activity, 'id' | 'user_id' | 'created_at' | 'updated_at'>) => void; onClose: () => void }> = ({ onAddActivity, onClose }) => {
   const [name, setName] = useState('');
   const [time, setTime] = useState('');
   const [description, setDescription] = useState('');
@@ -21,7 +24,18 @@ const AddActivityForm: React.FC<{ onAddActivity: (activity: Omit<Activity, 'id'>
         alert("Activity name and time are required.");
         return;
     }
-    onAddActivity({ name, time, description, isRecurring });
+    
+    // Convert time to ISO string for today
+    const today = new Date();
+    const [hours, minutes] = time.split(':');
+    const scheduledTime = new Date(today.getFullYear(), today.getMonth(), today.getDate(), parseInt(hours), parseInt(minutes));
+    
+    onAddActivity({ 
+      title: name, 
+      description: description || '', 
+      scheduled_time: scheduledTime.toISOString(),
+      is_recurring: isRecurring 
+    });
     onClose();
   };
 
@@ -55,10 +69,10 @@ const ActivityItem: React.FC<{ activity: Activity; onDelete: (id: string) => voi
   return (
     <div className="bg-white p-6 rounded-lg shadow-lg flex flex-col md:flex-row justify-between items-center space-y-4 md:space-y-0">
       <div className="flex-1">
-        <h4 className="text-2xl font-semibold text-sky-700">{activity.name}</h4>
-        <p className="text-sky-600 text-xl">{activity.time}</p>
+        <h4 className="text-2xl font-semibold text-sky-700">{activity.title}</h4>
+        <p className="text-sky-600 text-xl">{new Date(activity.scheduled_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
         {activity.description && <p className="text-slate-500 mt-1">{activity.description}</p>}
-        {activity.isRecurring && <p className="text-sm text-blue-500 mt-1">Recurring</p>}
+        {activity.is_recurring && <p className="text-sm text-blue-500 mt-1">Recurring</p>}
       </div>
       <div className="flex space-x-3">
         <Button onClick={() => onRemind(activity)} variant="ghost" size="md" leftIcon={<SpeakerWaveIcon className="w-5 h-5"/>}>Remind</Button>
@@ -69,30 +83,65 @@ const ActivityItem: React.FC<{ activity: Activity; onDelete: (id: string) => voi
 };
 
 const ActivityPlannerPage: React.FC = () => {
-  const [activities, setActivities] = useLocalStorage<Activity[]>('activities', []);
+  const { user } = useAuth();
+  const [activities, setActivities] = useState<Activity[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [notification, setNotification] = useState<{message: string, type: 'success' | 'error' | 'info'} | null>(null);
   const { speak, isSupported: ttsSupported, error: ttsError } = useTextToSpeech();
 
-  const handleAddActivity = (activityData: Omit<Activity, 'id'>) => {
-    const newActivity: Activity = { ...activityData, id: Date.now().toString() };
-    setActivities((prev) => [...prev, newActivity].sort((a,b) => a.time.localeCompare(b.time)));
-    setNotification({ message: `Activity "${newActivity.name}" added.`, type: 'success'});
+  // Load activities on component mount
+  React.useEffect(() => {
+    if (user) {
+      loadActivities();
+    }
+  }, [user]);
+
+  const loadActivities = async () => {
+    try {
+      setLoading(true);
+      const data = await activitiesAPI.getActivities();
+      setActivities(data);
+    } catch (error) {
+      console.error('Error loading activities:', error);
+      setNotification({ message: 'Error loading activities', type: 'error' });
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleDeleteActivity = (id: string) => {
+  const handleAddActivity = async (activityData: Omit<Activity, 'id' | 'user_id' | 'created_at' | 'updated_at'>) => {
+    try {
+      const newActivity = await activitiesAPI.createActivity(activityData);
+      setActivities((prev) => [...prev, newActivity].sort((a,b) => new Date(a.scheduled_time).getTime() - new Date(b.scheduled_time).getTime()));
+      setNotification({ message: `Activity "${newActivity.title}" added.`, type: 'success'});
+    } catch (error) {
+      console.error('Error adding activity:', error);
+      setNotification({ message: 'Error adding activity', type: 'error' });
+    }
+  };
+
+  const handleDeleteActivity = async (id: string) => {
     if (window.confirm("Are you sure you want to delete this activity?")) {
-      setActivities((prev) => prev.filter(act => act.id !== id));
-      setNotification({ message: 'Activity deleted.', type: 'info'});
+      try {
+        await activitiesAPI.deleteActivity(id);
+        setActivities((prev) => prev.filter(act => act.id !== id));
+        setNotification({ message: 'Activity deleted.', type: 'info'});
+      } catch (error) {
+        console.error('Error deleting activity:', error);
+        setNotification({ message: 'Error deleting activity', type: 'error' });
+      }
     }
   };
 
   const handleRemind = useCallback((activity: Activity) => {
     if (ttsSupported) {
-      speak(`Reminder: It's time for ${activity.name} at ${activity.time}. ${activity.description || ''}`);
-      setNotification({ message: `Reminder for "${activity.name}" sent.`, type: 'info'});
+      const timeString = new Date(activity.scheduled_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      speak(`Reminder: It's time for ${activity.title} at ${timeString}. ${activity.description || ''}`);
+      setNotification({ message: `Reminder for "${activity.title}" sent.`, type: 'info'});
     } else {
-      alert(`Reminder: It's time for ${activity.name} at ${activity.time}. ${activity.description || ''}`);
+      const timeString = new Date(activity.scheduled_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      alert(`Reminder: It's time for ${activity.title} at ${timeString}. ${activity.description || ''}`);
       setNotification({ message: 'Text-to-speech not supported. Showing alert instead.', type: 'info'});
     }
   }, [ttsSupported, speak, setNotification]);
@@ -102,14 +151,19 @@ const ActivityPlannerPage: React.FC = () => {
   useEffect(() => {
     const checkReminders = () => {
       const now = new Date();
-      const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
       activities.forEach(activity => {
-        if (activity.time === currentTime) {
+        const activityTime = new Date(activity.scheduled_time);
+        const timeDiff = Math.abs(now.getTime() - activityTime.getTime());
+        
+        // Check if activity time is within 1 minute of current time
+        if (timeDiff < 60000 && activity.completion_status === 'pending') {
           const lastReminderKey = `lastReminder_${activity.id}`;
-          const lastReminderTime = localStorage.getItem(lastReminderKey);
-          if (lastReminderTime !== currentTime) {
+          const lastReminderDate = localStorage.getItem(lastReminderKey);
+          const today = now.toDateString();
+          
+          if (lastReminderDate !== today) {
             handleRemind(activity);
-            localStorage.setItem(lastReminderKey, currentTime);
+            localStorage.setItem(lastReminderKey, today);
           }
         }
       });
@@ -118,6 +172,15 @@ const ActivityPlannerPage: React.FC = () => {
     const intervalId = setInterval(checkReminders, 30000); // Check every 30 seconds
     return () => clearInterval(intervalId);
   }, [activities, handleRemind]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-sky-600"></div>
+        <span className="ml-2 text-sky-600">Loading...</span>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-12 animate-fadeIn">

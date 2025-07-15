@@ -1,20 +1,32 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { LocationInfo, GroundingChunk } from '../types';
+import { useAuth } from '../contexts/AuthContext';
+import { locationAPI } from '../lib/api/location';
+import type { Database } from '../lib/database.types';
+import { GroundingChunk } from '../types';
 import Button from '../components/common/Button';
 import { MapPinIcon, HomeIcon, ArrowPathIcon, SpeakerWaveIcon } from '../constants';
-import useLocalStorage from '../hooks/useLocalStorage';
 import useTextToSpeech from '../hooks/useTextToSpeech';
 import { generateTextWithGoogleSearch } from '../services/geminiService';
 import PageHeader from '../components/common/PageHeader';
 import NotificationBanner from '../components/common/NotificationBanner';
 
+type LocationLog = Database['public']['Tables']['location_logs']['Row']
+type SafeZone = Database['public']['Tables']['safe_zones']['Row']
+
+interface LocationInfo {
+  latitude: number;
+  longitude: number;
+  address?: string;
+}
+
 const LocationServicesPage: React.FC = () => {
+  const { user } = useAuth();
   const [currentLocation, setCurrentLocation] = useState<LocationInfo | null>(null);
-  const [homeLocation, setHomeLocation] = useLocalStorage<LocationInfo | null>('homeLocation', null);
+  const [homeLocation, setHomeLocation] = useState<SafeZone | null>(null);
   const [isLoadingLocation, setIsLoadingLocation] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [destination, setDestination] = useState(''); // Corrected syntax here
+  const [destination, setDestination] = useState('');
   const [directions, setDirections] = useState<string | null>(null);
   const [sources, setSources] = useState<GroundingChunk[]>([]);
   const [isFetchingDirections, setIsFetchingDirections] = useState(false);
@@ -22,26 +34,56 @@ const LocationServicesPage: React.FC = () => {
 
   const { speak, isSupported: ttsSupported, error: ttsError } = useTextToSpeech();
 
+  // Load home location on component mount
+  React.useEffect(() => {
+    if (user) {
+      loadHomeLocation();
+    }
+  }, [user]);
+
+  const loadHomeLocation = async () => {
+    try {
+      const home = await locationAPI.getHomeSafeZone();
+      setHomeLocation(home);
+    } catch (error) {
+      console.error('Error loading home location:', error);
+    }
+  };
+
   const handleFetchLocation = useCallback(() => {
     setIsLoadingLocation(true);
     setError(null);
     navigator.geolocation.getCurrentPosition(
-      (position) => {
+      async (position) => {
         const loc: LocationInfo = {
           latitude: position.coords.latitude,
           longitude: position.coords.longitude,
         };
         setCurrentLocation(loc);
-        setIsLoadingLocation(false);
-        setNotification({ message: 'Current location updated.', type: 'success'});
-        // Simple check if user is away from home (if home is set)
-        if (homeLocation) {
-          const distance = calculateDistance(loc, homeLocation);
-          if (distance > 0.5) { // Roughly 0.5 km, very simplified
-             const message = "You seem to be away from home. Remember to stay safe. If you need help returning, click 'Guide Me Home'.";
-             setNotification({ message, type: 'info'});
-             if(ttsSupported) speak(message);
+        
+        try {
+          // Log location to database
+          await locationAPI.logLocation(loc.latitude, loc.longitude, position.coords.accuracy);
+          setNotification({ message: 'Current location updated.', type: 'success'});
+          
+          // Check if user is away from home (if home is set)
+          if (homeLocation) {
+            const distance = locationAPI.calculateDistance(
+              loc.latitude, 
+              loc.longitude, 
+              homeLocation.center_latitude, 
+              homeLocation.center_longitude
+            );
+            if (distance > homeLocation.radius_meters) {
+               const message = "You seem to be away from home. Remember to stay safe. If you need help returning, click 'Guide Me Home'.";
+               setNotification({ message, type: 'info'});
+               if(ttsSupported) speak(message);
+            }
           }
+        } catch (error) {
+          console.error('Error logging location:', error);
+        } finally {
+          setIsLoadingLocation(false);
         }
       },
       (geoError) => {
@@ -57,11 +99,23 @@ const LocationServicesPage: React.FC = () => {
     handleFetchLocation(); // Fetch location on component mount
   }, [handleFetchLocation]);
 
-  const handleSetHome = () => {
+  const handleSetHome = async () => {
     if (currentLocation) {
-      setHomeLocation(currentLocation);
-      setNotification({ message: 'Home location saved!', type: 'success'});
-      if(ttsSupported) speak("Home location has been set.");
+      try {
+        const newHome = await locationAPI.createSafeZone(
+          'Home',
+          currentLocation.latitude,
+          currentLocation.longitude,
+          100, // 100 meter radius
+          true  // is home
+        );
+        setHomeLocation(newHome);
+        setNotification({ message: 'Home location saved!', type: 'success'});
+        if(ttsSupported) speak("Home location has been set.");
+      } catch (error) {
+        console.error('Error setting home location:', error);
+        setNotification({ message: 'Error setting home location', type: 'error'});
+      }
     } else {
       setNotification({ message: 'Could not set home location. Current location unknown.', type: 'error'});
     }
@@ -79,7 +133,7 @@ const LocationServicesPage: React.FC = () => {
     setIsFetchingDirections(true);
     setDirections(null);
     setSources([]);
-    const prompt = `Provide simple, step-by-step walking directions from latitude ${currentLocation.latitude}, longitude ${currentLocation.longitude} to latitude ${homeLocation.latitude}, longitude ${homeLocation.longitude}. Focus on major landmarks if possible. Keep it very clear and easy to follow for someone who might be disoriented.`;
+    const prompt = `Provide simple, step-by-step walking directions from latitude ${currentLocation.latitude}, longitude ${currentLocation.longitude} to latitude ${homeLocation.center_latitude}, longitude ${homeLocation.center_longitude}. Focus on major landmarks if possible. Keep it very clear and easy to follow for someone who might be disoriented.`;
     
     try {
       const {text: resultText, sources: resultSources} = await generateTextWithGoogleSearch(prompt);
@@ -121,24 +175,19 @@ const LocationServicesPage: React.FC = () => {
     }
   };
 
-  const handleNotifyFamily = () => {
+  const handleNotifyFamily = async () => {
     // This is a simulation. In a real app, this would trigger a backend service.
-    setNotification({ message: 'Simulated: Family has been notified that you are leaving home.', type: 'info'});
-    if(ttsSupported) speak("Okay, I've sent a notification to your family that you are leaving.");
+    try {
+      if (currentLocation) {
+        await locationAPI.sendLocationUpdate(currentLocation.latitude, currentLocation.longitude);
+        setNotification({ message: 'Family has been notified of your current location.', type: 'info'});
+        if(ttsSupported) speak("Okay, I've sent a notification to your family with your current location.");
+      }
+    } catch (error) {
+      console.error('Error notifying family:', error);
+      setNotification({ message: 'Error sending notification', type: 'error'});
+    }
   };
-
-  // Simplified distance calculation (Haversine not needed for rough check)
-  const calculateDistance = (loc1: LocationInfo, loc2: LocationInfo): number => {
-    const R = 6371; // Radius of the Earth in km
-    const dLat = (loc2.latitude - loc1.latitude) * Math.PI / 180;
-    const dLon = (loc2.longitude - loc1.longitude) * Math.PI / 180;
-    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
-              Math.cos(loc1.latitude * Math.PI / 180) * Math.cos(loc2.latitude * Math.PI / 180) *
-              Math.sin(dLon/2) * Math.sin(dLon/2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-    return R * c; // Distance in km
-  };
-
 
   return (
     <div className="space-y-12 animate-fadeIn">
@@ -164,7 +213,7 @@ const LocationServicesPage: React.FC = () => {
       <div className="bg-white p-6 rounded-lg shadow-lg space-y-6">
         <h3 className="text-2xl font-semibold text-sky-700">Home Settings</h3>
         {homeLocation ? (
-          <p className="text-lg">Home is set to: Lat {homeLocation.latitude.toFixed(5)}, Lon {homeLocation.longitude.toFixed(5)}</p>
+          <p className="text-lg">Home is set to: Lat {homeLocation.center_latitude.toFixed(5)}, Lon {homeLocation.center_longitude.toFixed(5)}</p>
         ) : (
           <p className="text-slate-500 text-lg">Home location not set. Go to your home and click "Set Current Location as Home".</p>
         )}
@@ -211,7 +260,7 @@ const LocationServicesPage: React.FC = () => {
       
       <div className="bg-white p-6 rounded-lg shadow-lg">
          <h3 className="text-2xl font-semibold text-sky-700 mb-4">Safety Actions</h3>
-         <Button onClick={handleNotifyFamily} size="lg" variant="secondary">Notify Family (I'm Leaving)</Button>
+         <Button onClick={handleNotifyFamily} size="lg" variant="secondary">Notify Family (Current Location)</Button>
       </div>
 
     </div>

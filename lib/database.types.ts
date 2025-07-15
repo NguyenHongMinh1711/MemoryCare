@@ -1,21 +1,12 @@
-import { createClient } from '@supabase/supabase-js'
-import type { Database } from './database.types'
+export type Json =
+  | string
+  | number
+  | boolean
+  | null
+  | { [key: string]: Json | undefined }
+  | Json[]
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL!
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY!
-
-if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error('Missing Supabase environment variables')
-}
-
-export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, {
-  auth: {
-    autoRefreshToken: true,
-    persistSession: true,
-    detectSessionInUrl: true
-  }
-})
-
+export interface Database {
   public: {
     Tables: {
       user_profiles: {
@@ -47,6 +38,35 @@ export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, {
           updated_at?: string
         }
       }
+      caregiver_relationships: {
+        Row: {
+          id: string
+          caregiver_id: string
+          patient_id: string
+          relationship_type: string
+          permissions: Json
+          is_active: boolean
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          caregiver_id: string
+          patient_id: string
+          relationship_type?: string
+          permissions?: Json
+          is_active?: boolean
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          caregiver_id?: string
+          patient_id?: string
+          relationship_type?: string
+          permissions?: Json
+          is_active?: boolean
+          created_at?: string
+        }
+      }
       people_records: {
         Row: {
           id: string
@@ -58,6 +78,7 @@ export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, {
           tags: string[]
           voice_note_url: string | null
           voice_transcription: string | null
+          search_vector: unknown | null
           created_at: string
           updated_at: string
         }
@@ -71,6 +92,7 @@ export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, {
           tags?: string[]
           voice_note_url?: string | null
           voice_transcription?: string | null
+          search_vector?: unknown | null
           created_at?: string
           updated_at?: string
         }
@@ -84,6 +106,7 @@ export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, {
           tags?: string[]
           voice_note_url?: string | null
           voice_transcription?: string | null
+          search_vector?: unknown | null
           created_at?: string
           updated_at?: string
         }
@@ -96,7 +119,8 @@ export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, {
           mood: string | null
           voice_recording_url: string | null
           voice_transcription: string | null
-          attachments: any[]
+          attachments: Json[]
+          search_vector: unknown | null
           created_at: string
         }
         Insert: {
@@ -106,7 +130,8 @@ export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, {
           mood?: string | null
           voice_recording_url?: string | null
           voice_transcription?: string | null
-          attachments?: any[]
+          attachments?: Json[]
+          search_vector?: unknown | null
           created_at?: string
         }
         Update: {
@@ -116,7 +141,8 @@ export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, {
           mood?: string | null
           voice_recording_url?: string | null
           voice_transcription?: string | null
-          attachments?: any[]
+          attachments?: Json[]
+          search_vector?: unknown | null
           created_at?: string
         }
       }
@@ -131,8 +157,8 @@ export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, {
           priority_level: 'low' | 'medium' | 'high' | 'urgent'
           category: string
           is_recurring: boolean
-          recurrence_pattern: any
-          reminder_settings: any
+          recurrence_pattern: Json
+          reminder_settings: Json
           completion_status: 'pending' | 'completed' | 'skipped' | 'cancelled'
           completed_at: string | null
           notes: string
@@ -150,8 +176,8 @@ export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, {
           priority_level?: 'low' | 'medium' | 'high' | 'urgent'
           category?: string
           is_recurring?: boolean
-          recurrence_pattern?: any
-          reminder_settings?: any
+          recurrence_pattern?: Json
+          reminder_settings?: Json
           completion_status?: 'pending' | 'completed' | 'skipped' | 'cancelled'
           completed_at?: string | null
           notes?: string
@@ -169,8 +195,8 @@ export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, {
           priority_level?: 'low' | 'medium' | 'high' | 'urgent'
           category?: string
           is_recurring?: boolean
-          recurrence_pattern?: any
-          reminder_settings?: any
+          recurrence_pattern?: Json
+          reminder_settings?: Json
           completion_status?: 'pending' | 'completed' | 'skipped' | 'cancelled'
           completed_at?: string | null
           notes?: string
@@ -296,6 +322,67 @@ export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, {
           processed_at?: string | null
         }
       }
+      voice_commands: {
+        Row: {
+          id: string
+          user_id: string
+          command_text: string
+          command_type: 'navigation' | 'reminder' | 'memory_recall' | 'journal_entry' | 'activity_log' | 'general'
+          intent_data: Json
+          response_text: string | null
+          response_audio_url: string | null
+          is_processed: boolean
+          processing_error: string | null
+          created_at: string
+          processed_at: string | null
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          command_text: string
+          command_type?: 'navigation' | 'reminder' | 'memory_recall' | 'journal_entry' | 'activity_log' | 'general'
+          intent_data?: Json
+          response_text?: string | null
+          response_audio_url?: string | null
+          is_processed?: boolean
+          processing_error?: string | null
+          created_at?: string
+          processed_at?: string | null
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          command_text?: string
+          command_type?: 'navigation' | 'reminder' | 'memory_recall' | 'journal_entry' | 'activity_log' | 'general'
+          intent_data?: Json
+          response_text?: string | null
+          response_audio_url?: string | null
+          is_processed?: boolean
+          processing_error?: string | null
+          created_at?: string
+          processed_at?: string | null
+        }
+      }
+    }
+    Views: {
+      [_ in never]: never
+    }
+    Functions: {
+      [_ in never]: never
+    }
+    Enums: {
+      user_role: 'patient' | 'caregiver'
+      location_type: 'home' | 'safe_zone' | 'unknown' | 'emergency'
+      priority_level: 'low' | 'medium' | 'high' | 'urgent'
+      completion_status: 'pending' | 'completed' | 'skipped' | 'cancelled'
+      reminder_type: 'notification' | 'voice' | 'sms'
+      alert_type: 'left_safe_zone' | 'entered_safe_zone' | 'emergency_location' | 'low_battery' | 'prolonged_absence'
+      navigation_status: 'active' | 'completed' | 'cancelled'
+      processing_status: 'pending' | 'processing' | 'completed' | 'failed'
+      command_type: 'navigation' | 'reminder' | 'memory_recall' | 'journal_entry' | 'activity_log' | 'general'
+    }
+    CompositeTypes: {
+      [_ in never]: never
     }
   }
 }

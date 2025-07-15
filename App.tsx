@@ -1,14 +1,19 @@
 
 import React from 'react';
 import { Routes, Route, Link, useLocation } from 'react-router-dom';
+import { AuthProvider } from './contexts/AuthContext';
+import AuthGuard from './components/auth/AuthGuard';
+import { useAuth } from './contexts/AuthContext';
 import HomePage from './pages/HomePage';
 import MemoryLogPage from './pages/MemoryLogPage';
 import ActivityPlannerPage from './pages/ActivityPlannerPage';
 import LocationServicesPage from './pages/LocationServicesPage';
-import { HomeIcon, BookOpenIcon, CalendarIcon, MapPinIcon } from './constants';
+import Button from './components/common/Button';
+import { HomeIcon, BookOpenIcon, CalendarIcon, MapPinIcon, UserCircleIcon } from './constants';
 
-const App: React.FC = () => {
+const AppContent: React.FC = () => {
   const location = useLocation();
+  const { user, profile, signOut } = useAuth();
 
   const navItems = [
     { path: '/', label: 'Home', icon: <HomeIcon className="w-6 h-6 mr-2" /> },
@@ -17,10 +22,31 @@ const App: React.FC = () => {
     { path: '/location', label: 'Location', icon: <MapPinIcon className="w-6 h-6 mr-2" /> },
   ];
 
+  const handleSignOut = async () => {
+    try {
+      await signOut();
+    } catch (error) {
+      console.error('Error signing out:', error);
+    }
+  };
+
   return (
     <div className="min-h-screen flex flex-col bg-sky-50">
       <header className="bg-sky-600 text-white p-6 shadow-md">
-        <h1 className="text-3xl font-bold text-center">MemoryCare</h1>
+        <div className="flex justify-between items-center">
+          <h1 className="text-3xl font-bold">MemoryCare</h1>
+          <div className="flex items-center space-x-4">
+            <div className="flex items-center space-x-2">
+              <UserCircleIcon className="w-6 h-6" />
+              <span className="text-sm">
+                {profile?.full_name} ({profile?.role})
+              </span>
+            </div>
+            <Button onClick={handleSignOut} variant="ghost" size="sm">
+              Sign Out
+            </Button>
+          </div>
+        </div>
       </header>
 
       <div className="flex flex-1 flex-col md:flex-row">
@@ -52,6 +78,16 @@ const App: React.FC = () => {
         MemoryCare &copy; {new Date().getFullYear()}
       </footer>
     </div>
+  );
+};
+
+const App: React.FC = () => {
+  return (
+    <AuthProvider>
+      <AuthGuard>
+        <AppContent />
+      </AuthGuard>
+    </AuthProvider>
   );
 };
 
